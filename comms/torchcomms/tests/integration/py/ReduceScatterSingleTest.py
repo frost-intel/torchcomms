@@ -7,7 +7,7 @@ import os
 import unittest
 
 import torch
-from torchcomms import ReduceOp
+from torchcomms import RedOpType, ReduceOp
 from torchcomms.tests.integration.py.TorchCommTestHelpers import (
     get_dtype_name,
     get_op_name,
@@ -23,6 +23,28 @@ class ReduceScatterSingleTest(unittest.TestCase):
     dtypes = [torch.float, torch.int, torch.int8]
     ops = [ReduceOp.SUM, ReduceOp.MAX]
     num_replays = 4
+
+    def get_test_cases(self):
+        # Create a test params
+        normal_test_cases = list(itertools.product(self.counts, self.dtypes, self.ops))
+        premul_sum_types_ops = [
+            (torch.half, ReduceOp.PREMUL_SUM(2.0)),
+            (torch.float, ReduceOp.PREMUL_SUM(2.0)),
+            (torch.double, ReduceOp.PREMUL_SUM(2.0)),
+            (
+                torch.bfloat16,
+                ReduceOp.PREMUL_SUM(
+                    torch.ones(1, dtype=torch.bfloat16, device=self.device) * float(2.0)
+                ),
+            ),
+        ]
+        premul_sum_test_cases = [
+            (count, dtype, op)
+            for count, (dtype, op) in itertools.product(
+                self.counts, premul_sum_types_ops
+            )
+        ]
+        return normal_test_cases + premul_sum_test_cases
 
     def get_wrapper(self):
         return TorchCommTestWrapper()
@@ -251,6 +273,9 @@ class ReduceScatterSingleTest(unittest.TestCase):
         elif op == ReduceOp.MAX:
             # Max: rank+1
             expected_value = self.rank + 1
+        elif op.type == RedOpType.PREMUL_SUM:
+            # PremulSum: num_ranks * (rank+1) multiplied by 2.0
+            expected_value = self.num_ranks * (self.rank + 1) * 2
 
         # Compare output with expected tensor
         description = f"reduce_scatter_single with op {get_op_name(op)}"
@@ -273,31 +298,31 @@ class ReduceScatterSingleTest(unittest.TestCase):
 
     def test_sync_reduce_scatter_single(self):
         """Test synchronous reduce_scatter_single with work object."""
-        for count, dtype, op in itertools.product(self.counts, self.dtypes, self.ops):
+        for count, dtype, op in self.get_test_cases():
             with self.subTest(count=count, dtype=dtype, op=op):
                 self._sync_reduce_scatter_single(count, dtype, op)
 
     def test_sync_reduce_scatter_single_no_work(self):
         """Test synchronous reduce_scatter_single without work object."""
-        for count, dtype, op in itertools.product(self.counts, self.dtypes, self.ops):
+        for count, dtype, op in self.get_test_cases():
             with self.subTest(count=count, dtype=dtype, op=op):
                 self._sync_reduce_scatter_single_no_work(count, dtype, op)
 
     def test_async_reduce_scatter_single(self):
         """Test asynchronous reduce_scatter_single with wait."""
-        for count, dtype, op in itertools.product(self.counts, self.dtypes, self.ops):
+        for count, dtype, op in self.get_test_cases():
             with self.subTest(count=count, dtype=dtype, op=op):
                 self._async_reduce_scatter_single(count, dtype, op)
 
     def test_async_reduce_scatter_single_early_reset(self):
         """Test asynchronous reduce_scatter_single with early reset."""
-        for count, dtype, op in itertools.product(self.counts, self.dtypes, self.ops):
+        for count, dtype, op in self.get_test_cases():
             with self.subTest(count=count, dtype=dtype, op=op):
                 self._async_reduce_scatter_single_early_reset(count, dtype, op)
 
     def test_reduce_scatter_single_input_deleted(self):
         """Test asynchronous reduce_scatter_single with input deleted after enqueue."""
-        for count, dtype, op in itertools.product(self.counts, self.dtypes, self.ops):
+        for count, dtype, op in self.get_test_cases():
             with self.subTest(count=count, dtype=dtype, op=op):
                 self._reduce_scatter_single_input_deleted(count, dtype, op)
 
@@ -307,7 +332,7 @@ class ReduceScatterSingleTest(unittest.TestCase):
     )
     def test_graph_reduce_scatter_single(self):
         """Test CUDA Graph reduce_scatter_single."""
-        for count, dtype, op in itertools.product(self.counts, self.dtypes, self.ops):
+        for count, dtype, op in self.get_test_cases():
             with self.subTest(count=count, dtype=dtype, op=op):
                 self._graph_reduce_scatter_single(count, dtype, op)
 
@@ -317,7 +342,7 @@ class ReduceScatterSingleTest(unittest.TestCase):
     )
     def test_graph_reduce_scatter_single_input_deleted(self):
         """Test CUDA Graph reduce_scatter_single with input deleted after graph creation."""
-        for count, dtype, op in itertools.product(self.counts, self.dtypes, self.ops):
+        for count, dtype, op in self.get_test_cases():
             with self.subTest(count=count, dtype=dtype, op=op):
                 self._graph_reduce_scatter_single_input_deleted(count, dtype, op)
 

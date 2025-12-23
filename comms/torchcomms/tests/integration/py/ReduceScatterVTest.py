@@ -7,7 +7,7 @@ import os
 import unittest
 
 import torch
-from torchcomms import ReduceOp
+from torchcomms import ReduceOp, RedOpType
 from torchcomms.tests.integration.py.TorchCommTestHelpers import (
     get_dtype_name,
     get_op_name,
@@ -23,6 +23,28 @@ class ReduceScatterVTest(unittest.TestCase):
     dtypes = [torch.float, torch.int, torch.int8]
     ops = [ReduceOp.SUM, ReduceOp.MAX]
     num_replays = 4
+
+    def get_test_cases(self):
+        # Create a test params
+        normal_test_cases = list(itertools.product(self.counts, self.dtypes, self.ops))
+        premul_sum_types_ops = [
+            (torch.half, ReduceOp.PREMUL_SUM(2.0)),
+            (torch.float, ReduceOp.PREMUL_SUM(2.0)),
+            (torch.double, ReduceOp.PREMUL_SUM(2.0)),
+            (
+                torch.bfloat16,
+                ReduceOp.PREMUL_SUM(
+                    torch.ones(1, dtype=torch.bfloat16, device=self.device) * float(2.0)
+                ),
+            ),
+        ]
+        premul_sum_test_cases = [
+            (count, dtype, op)
+            for count, (dtype, op) in itertools.product(
+                self.counts, premul_sum_types_ops
+            )
+        ]
+        return normal_test_cases + premul_sum_test_cases
 
     def get_wrapper(self):
         return TorchCommTestWrapper()
@@ -70,7 +92,12 @@ class ReduceScatterVTest(unittest.TestCase):
             # Each tensor has rank-specific values
             element_count = count[r]
 
-            if dtype == torch.float or dtype == torch.bfloat16:
+            if (
+                dtype == torch.float
+                or dtype == torch.bfloat16
+                or dtype == torch.double
+                or dtype == torch.half
+            ):
                 tensor = torch.ones(element_count, **options) * float(r + 1)
             elif dtype == torch.int:
                 tensor = torch.ones(element_count, **options) * int(r + 1)
@@ -91,6 +118,9 @@ class ReduceScatterVTest(unittest.TestCase):
             return self.num_ranks * (self.rank + 1)
         elif op == ReduceOp.MAX:
             return self.rank + 1
+        elif op.type == RedOpType.PREMUL_SUM:
+            # PremulSum: num_ranks * (rank + 1) multiplied by 2.0
+            return self.num_ranks * (self.rank + 1) * 2
         else:
             raise RuntimeError("Unsupported reduce operation")
 
@@ -122,7 +152,7 @@ class ReduceScatterVTest(unittest.TestCase):
     )
     def test_sync_reduce_scatter_v(self):
         """Test synchronous reduce_scatter_v with work object."""
-        for count, dtype, op in itertools.product(self.counts, self.dtypes, self.ops):
+        for count, dtype, op in self.get_test_cases():
             with self.subTest(count=count, dtype=dtype, op=op):
                 self._sync_reduce_scatter_v(count, dtype, op)
 
